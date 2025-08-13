@@ -1,9 +1,7 @@
-mod aave;
 mod collector;
 mod db;
 mod multicall;
 mod strategy;
-mod contracts;
 mod config;
 mod liquity;
 
@@ -55,21 +53,6 @@ sol!(
     PriceFeed,
     "../artifacts/PriceFeed.sol/PriceFeed.json"
 );
-/*
-hyperlend:-
- pool address: 0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b;
- liquidator address: 0xcb53ae2b893ad77d77a1836a3ce8f3b7740162b7;
- swapper address: 0xC275a3dc6Ed864BA9FAC3937cdb0C6fA3C553f96
- gateway: 0x49558c794ea2aC8974C9F27886DDfAa951E99171
- data provider: 0x5481bf8d3946E6A3168640c1D7523eB59F055a29
-
-hyperYield
-pool address: 0xC0Fd3F8e8b0334077c9f342671be6f1a53001F12
-liquidator: 0x67fc30ecb49a859847f2bdad37c1efda210e8918
-gatway: 0x859A76DFB86b57D249B48B03E35638ffe106a06b
-data_provider: 0x022F164dDBa35a994ad0f001705e9c187156E244
-
-*/
 
  const PRIVATE_KEY: &str = "0x600640501f924642f7c828e91451599b0d66ddcdb73749bb4178c97bf7a77a3d";
 

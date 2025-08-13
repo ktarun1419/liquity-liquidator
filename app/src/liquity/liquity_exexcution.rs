@@ -12,7 +12,7 @@ use eyre::Result;
 use serde::{Deserialize, Serialize};
 use TroveManager::TroveChange;
 
-use crate::{aave::aave_strategy::StrategyProvider, liquity::liquity_exexcution::LiquityLiquidator::LiquityLiquidatorInstance, DefaultProvider};
+use crate::{liquity::{liquity_exexcution::LiquityLiquidator::LiquityLiquidatorInstance, liquity_strategy::StrategyProvider}, DefaultProvider};
 
 sol!(
     #[derive(Debug, Default, Serialize, Deserialize)]

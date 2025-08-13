@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
 use crate::{
-    db::{store::Trove, DatabaseStore},
-    liquity::{liquity::{decode_event_log, TroveManager::TroveManagerEvents}, liquity_exexcution::LiquityExecutor},
+    db::{DatabaseStore, store::Trove},
+    liquity::{
+        liquity::{TroveManager::TroveManagerEvents, decode_event_log},
+        liquity_exexcution::LiquityExecutor,
+        trove_memory_cache::TroveMemoryCache,
+    },
     strategy::Strategy,
 };
 use TroveManager::TroveChange;
 use alloy::{
-    eips::{BlockId, BlockNumberOrTag},
+    eips::BlockNumberOrTag,
     primitives::{Address, U256, Uint},
     providers::{
         Identity, Provider, RootProvider,
@@ -56,9 +60,7 @@ pub type StrategyProvider = FillProvider<
     RootProvider,
 >;
 
-
-
-static DECIMAL_PRECISION:u128 = 1_000_000_000_000_000_000u128;
+static DECIMAL_PRECISION: u128 = 1_000_000_000_000_000_000u128;
 const ONE_YEAR: u64 = 31_536_000;
 
 /// Liquity Strategy that monitors and processes TroveUpdated events
@@ -70,8 +72,8 @@ pub struct LiquityStrategy {
     store: Arc<DatabaseStore>,
     provider: Arc<StrategyProvider>,
     oracle: Address,
-    mcr: Uint<256, 4>, // Chainlink ETH/USD
-    executor: LiquityExecutor,  // Your adapted executor
+    mcr: Uint<256, 4>,         // Chainlink ETH/USD
+    executor: LiquityExecutor, // Your adapted executor
 }
 
 impl LiquityStrategy {
@@ -82,7 +84,7 @@ impl LiquityStrategy {
         provider: Arc<StrategyProvider>,
         oracle_address: Address,
         mcr: Uint<256, 4>,
-        executor:LiquityExecutor
+        executor: LiquityExecutor,
     ) -> Self {
         Self {
             name: "LiquityStrategy".to_string(),
@@ -91,7 +93,7 @@ impl LiquityStrategy {
             provider,
             oracle: oracle_address,
             mcr,
-            executor // executor,
+            executor, // executor,
         }
     }
 
@@ -115,7 +117,7 @@ impl LiquityStrategy {
                 let trove_id = event._troveId.to_string();
                 let coll = event._coll;
                 let debt = event._debt;
-                
+
                 // Handle zero debt/coll as closed/liquidated
                 let status = if debt == Uint::ZERO && coll == Uint::ZERO {
                     "closed".to_string()
@@ -148,71 +150,90 @@ impl LiquityStrategy {
     }
 
     /// Check for liquidation opportunities
-    async fn check_for_liquidation_opportunities(&self, timestamp: u64) -> Result<Vec<Uint<256,4>>> {
-        let sorted_troves = self.store.get_all_active_troves().await?;
+    async fn check_for_liquidation_opportunities(
+        &self,
+        timestamp: u64,
+        memory_cache: TroveMemoryCache,
+    ) -> Result<Vec<Uint<256, 4>>> {
+        let mut liquidatable: Vec<Uint<256, 4>> = Vec::with_capacity(32);
+
+        // Get troves - from memory if available, otherwise from DB
+        let sorted_troves = memory_cache.get_sorted_troves(&self.store).await?;
 
         if sorted_troves.is_empty() {
-            info!("No active troves to check.");
-            return Ok(Vec::new());
+            return Ok(liquidatable);
         }
 
-        info!("Checking {} sorted troves (riskiest first)", sorted_troves.len());
+        info!("Checking {} troves for liquidation", sorted_troves.len());
 
         // Fetch oracle price once
         let price = self.get_oracle_price().await?;
-        info!("price is :{} ", price);
-        let mut liquidatable: Vec<Uint<256,4>> = Vec::new();
+        let mcr = self.mcr;
+        let zero = Uint::<256, 4>::ZERO;
+        let timestamp_u64 = timestamp;
 
+        // Process troves with minimal allocations
         for trove in sorted_troves {
-            let coll = Uint::<256, 4>::from_str(&trove.collateral)?;
-            let debt = Uint::<256, 4>::from_str(&trove.debt)?;
-            if debt == Uint::ZERO || coll == Uint::ZERO {
-                continue;
-            }
+            // Early validation - skip invalid troves immediately
+            let coll = match Uint::<256, 4>::from_str(&trove.collateral) {
+                Ok(val) if val != zero => val,
+                _ => continue,
+            };
 
-            let mut last_timestamp = 0;
+            let debt = match Uint::<256, 4>::from_str(&trove.debt) {
+                Ok(val) if val != zero => val,
+                _ => continue,
+            };
 
-            if let Some(block) =
-                self.provider.get_block(BlockId::from(trove.last_updated as u64)).await?
-            {
-                // false for basic details (no txs)
-                last_timestamp = block.header.timestamp; // Unix timestamp in seconds
-                info!("Block timestamp: {}", timestamp);
-            } else {
-                info!("Block #{} not found; skipping timestamp", trove.last_updated);
-            }
+            let interest_rate = match Uint::<256, 4>::from_str(&trove.interest_rate) {
+                Ok(val) => val,
+                Err(_) => continue,
+            };
 
-            //Compute full ICR: (coll * price) / debt  (with 18 decimals)
+            // Calculate ICR
             let full_icr = self.calculate_full_icr(
                 debt,
                 coll,
-                Uint::<256, 4>::from_str(&trove.interest_rate)?,
-                timestamp as u64,
-                last_timestamp,
-                price
+                interest_rate,
+                timestamp_u64,
+                trove.last_updated as u64,
+                price,
             );
 
-            if full_icr < self.mcr {
-                liquidatable.push(Uint::<256, 4>::from_str(&trove.trove_id)?);
-                info!(
-                    "🔍 Trove {} - ICR: {} - LIQUIDATABLE (continuing)",
-                    &*trove.trove_id, full_icr
-                );
-                info!("🔍 Collateral {} - Debt {}", coll, debt);
+            if full_icr < mcr {
+                // Parse trove_id only when needed
+                if let Ok(trove_id) = Uint::<256, 4>::from_str(&trove.trove_id) {
+                    liquidatable.push(trove_id);
+                    {
+                        info!("🔍 Trove {} - ICR: {} - LIQUIDATABLE", &trove.trove_id, full_icr);
+                        info!("🔍 Collateral {} - Debt {}", coll, debt);
+                    }
+                }
             } else {
-                info!(
-                    "🔍 Trove {} - ICR: {} - NOT LIQUIDATABLE (stopping checks)",
-                    &*trove.trove_id, full_icr
-                );
-                info!("🔍 Collateral {} - Debt {}", coll, debt);
+                // Since troves are sorted by risk, we can break early
+
+                {
+                    info!(
+                        "🔍 Trove {} - ICR: {} - NOT LIQUIDATABLE (stopping)",
+                        &trove.trove_id, full_icr
+                    );
+                    info!("🔍 Collateral {} - Debt {}", coll, debt);
+                }
                 break;
             }
         }
 
+        // If we found liquidatable troves, clear cache so next call gets fresh data
         if !liquidatable.is_empty() {
-            info!("Found {} liquidatable troves; batching for execution", liquidatable.len());
+            info!(
+                "Found {} liquidatable troves - clearing cache for next iteration",
+                liquidatable.len()
+            );
+            memory_cache.clear_memory();
+        }
 
-            // self.executor.execute_batch_liquidation(liquidatable.clone()).await?;
+        if !liquidatable.is_empty() {
+            info!("Found {} liquidatable troves for batching", liquidatable.len());
         }
 
         Ok(liquidatable)
@@ -241,7 +262,7 @@ impl LiquityStrategy {
         interest_rate: Uint<256, 4>,
         block_timestamp: u64,
         last_updated: u64,
-        price:  Uint<256, 4>,
+        price: Uint<256, 4>,
     ) -> Uint<256, 4> {
         // weightedRecordedDebt = recordedDebt * annualInterestRate
         let weighted_recorded_debt = debt.saturating_mul(interest_rate);
@@ -250,20 +271,18 @@ impl LiquityStrategy {
         let period_u256 = U256::from(period_secs_u64);
 
         let accrued_interest = Self::calc_interest(weighted_recorded_debt, period_u256);
-        info!("accrued_interest :{}", accrued_interest);
 
         let entire_debt = debt + accrued_interest;
-        info!("entire_debt :{}", entire_debt);
 
         // entireColl = coll + redistCollGain
         let entire_coll = coll;
 
-        (entire_coll* price) / entire_debt
+        (entire_coll * price) / entire_debt
     }
 
     pub fn calc_interest(weighted_debt: Uint<256, 4>, period: Uint<256, 4>) -> Uint<256, 4> {
         let num = weighted_debt.saturating_mul(period);
-        info!("num {} " ,num);
+        info!("num {} ", num);
         let after_year = num / Uint::from(ONE_YEAR) / Uint::from(DECIMAL_PRECISION);
         after_year
     }
@@ -291,7 +310,8 @@ impl Strategy<Log> for LiquityStrategy {
 impl Strategy<u64> for LiquityStrategy {
     async fn execute(&self, block_number: &u64) -> Result<()> {
         info!("🔍 Block: {:?}", block_number);
-        
+        let start_time = std::time::Instant::now();
+        let memory_cache = TroveMemoryCache::new(2000000);
 
         let filter = Filter::new()
             .address(self.trove_manager)
@@ -303,26 +323,22 @@ impl Strategy<u64> for LiquityStrategy {
             if log.address() == self.trove_manager {
                 if let Some(event) = decode_event_log(&log) {
                     self.process_trove_event(&event, log.block_number.unwrap()).await?;
+                    memory_cache.clear_memory();
                 }
             }
         }
         self.store.set_last_block(*block_number as i64).await?;
 
-        let mut timestamp = 0;
+        let timestamp = *block_number;
 
-        if let Some(block) = self.provider.get_block(BlockId::from(*block_number)).await? {
-            // false for basic details (no txs)
-            timestamp = block.header.timestamp; // Unix timestamp in seconds
-            info!("Block timestamp: {}", timestamp);
-        } else {
-            info!("Block #{} not found; skipping timestamp", block_number);
-        }
-
-        let ops = self.check_for_liquidation_opportunities(timestamp).await?;
+        let ops = self.check_for_liquidation_opportunities(timestamp, memory_cache).await?;
         if !ops.is_empty() {
             info!("🔍 Liquidation opportunities found: {:?}", ops.len());
             self.executor.execute(ops).await?;
         }
+        let end_time = std::time::Instant::now();
+        let duration = end_time.duration_since(start_time);
+        info!("🔍 Liquidation opportunities check took {:?}", duration);
 
         Ok(())
     }

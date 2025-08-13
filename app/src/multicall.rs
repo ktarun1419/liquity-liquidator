@@ -9,4 +9,4 @@ sol!(
     "../artifacts/Multicall.sol/Multicall.json"
 );
 
-pub const MULTICALL_ADDRESS: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
+pub const _MULTICALL_ADDRESS: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";

@@ -74,6 +74,7 @@ pub struct LiquityStrategy {
     oracle: Address,
     mcr: Uint<256, 4>,         // Chainlink ETH/USD
     executor: LiquityExecutor, // Your adapted executor
+    memory_cache: TroveMemoryCache,
 }
 
 impl LiquityStrategy {
@@ -86,6 +87,9 @@ impl LiquityStrategy {
         mcr: Uint<256, 4>,
         executor: LiquityExecutor,
     ) -> Self {
+
+        let memory_cache = TroveMemoryCache::new(2000000);
+
         Self {
             name: "LiquityStrategy".to_string(),
             trove_manager,
@@ -94,6 +98,7 @@ impl LiquityStrategy {
             oracle: oracle_address,
             mcr,
             executor, // executor,
+            memory_cache
         }
     }
 
@@ -153,12 +158,11 @@ impl LiquityStrategy {
     async fn check_for_liquidation_opportunities(
         &self,
         timestamp: u64,
-        memory_cache: TroveMemoryCache,
     ) -> Result<Vec<Uint<256, 4>>> {
         let mut liquidatable: Vec<Uint<256, 4>> = Vec::with_capacity(32);
 
         // Get troves - from memory if available, otherwise from DB
-        let sorted_troves = memory_cache.get_sorted_troves(&self.store).await?;
+        let sorted_troves = self.memory_cache.get_sorted_troves(&self.store).await?;
 
         if sorted_troves.is_empty() {
             return Ok(liquidatable);
@@ -229,7 +233,7 @@ impl LiquityStrategy {
                 "Found {} liquidatable troves - clearing cache for next iteration",
                 liquidatable.len()
             );
-            memory_cache.clear_memory();
+            self.memory_cache.clear_memory();
         }
 
         if !liquidatable.is_empty() {
@@ -282,7 +286,6 @@ impl LiquityStrategy {
 
     pub fn calc_interest(weighted_debt: Uint<256, 4>, period: Uint<256, 4>) -> Uint<256, 4> {
         let num = weighted_debt.saturating_mul(period);
-        info!("num {} ", num);
         let after_year = num / Uint::from(ONE_YEAR) / Uint::from(DECIMAL_PRECISION);
         after_year
     }
@@ -311,7 +314,7 @@ impl Strategy<u64> for LiquityStrategy {
     async fn execute(&self, block_number: &u64) -> Result<()> {
         info!("🔍 Block: {:?}", block_number);
         let start_time = std::time::Instant::now();
-        let memory_cache = TroveMemoryCache::new(2000000);
+       
 
         let filter = Filter::new()
             .address(self.trove_manager)
@@ -323,7 +326,7 @@ impl Strategy<u64> for LiquityStrategy {
             if log.address() == self.trove_manager {
                 if let Some(event) = decode_event_log(&log) {
                     self.process_trove_event(&event, log.block_number.unwrap()).await?;
-                    memory_cache.clear_memory();
+                    self.memory_cache.clear_memory();
                 }
             }
         }
@@ -331,7 +334,7 @@ impl Strategy<u64> for LiquityStrategy {
 
         let timestamp = *block_number;
 
-        let ops = self.check_for_liquidation_opportunities(timestamp, memory_cache).await?;
+        let ops = self.check_for_liquidation_opportunities(timestamp).await?;
         if !ops.is_empty() {
             info!("🔍 Liquidation opportunities found: {:?}", ops.len());
             self.executor.execute(ops).await?;

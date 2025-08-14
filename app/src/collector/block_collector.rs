@@ -1,10 +1,8 @@
-use alloy::{
-    providers::{IpcConnect, Provider, ProviderBuilder, WsConnect},
-};
+use alloy::providers::{IpcConnect, Provider, ProviderBuilder, WsConnect};
 use eyre::Result;
 use log::{error, info};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::{sync::Arc, time::Duration};
+use tokio::{sync::RwLock, time::{sleep, Instant}};
 use tokio_stream::StreamExt;
 
 use crate::strategy::Strategy;
@@ -70,34 +68,49 @@ impl BlockCollector {
     }
 
     /// Start listening to new blocks and trigger strategies
-    pub async fn start_listening(&self) -> Result<()> {
-        let provider = self.provider.as_ref().ok_or_else(|| {
-            eyre::eyre!("Provider not connected. Call connect_ws() or connect_ipc() first")
-        })?;
+    pub async fn start_listening(&self, current_block_number: u64) -> Result<()> {
+        // let provider = self.provider.as_ref().ok_or_else(|| {
+        //     eyre::eyre!("Provider not connected. Call connect_ws() or connect_ipc() first")
+        // })?;
+
+        let mut block_number = current_block_number;
 
         info!("Starting block listener...");
 
         // Subscribe to new block headers
-        let subscription = provider.watch_blocks().await?;
-        let mut stream = subscription.into_stream();
+        // let subscription = provider.watch_blocks().await?;
+        // let mut stream = subscription.into_stream();
 
         info!("🚀 Block collector is now listening for new blocks");
 
-        while let Some(hashes) = stream.next().await {
-            if hashes.is_empty() {
-                continue;
-            }
-            for hash in hashes {
-                let block = provider.get_block_by_hash(hash).await?;
-                if block.is_none() {
-                    info!("🔍 Block not found: {:?}", hash);
-                    continue;
-                }
-                let block = block.unwrap();
-                info!("📦 New block received: #{}", block.header.number);
-                self.execute_strategies(&block.header.number).await;
+        loop {
+            let start_time = Instant::now();
+
+            self.execute_strategies(&block_number).await;
+            block_number += 1;
+
+            let elapsed = start_time.elapsed();
+
+            if elapsed < Duration::from_secs(1) {
+                sleep(Duration::from_secs(1) - elapsed).await;
             }
         }
+
+        // while let Some(hashes) = stream.next().await {
+        //     if hashes.is_empty() {
+        //         continue;
+        //     }
+        //     for hash in hashes {
+        //         let block = provider.get_block_by_hash(hash).await?;
+        //         if block.is_none() {
+        //             info!("🔍 Block not found: {:?}", hash);
+        //             continue;
+        //         }
+        //         let block = block.unwrap();
+        //         info!("📦 New block received: #{}", block.header.number);
+        //         self.execute_strategies(&block.header.number).await;
+        //     }
+        // }
 
         // let subscription = provider.subscribe_blocks().await?;
         // let mut stream = subscription.into_stream();
@@ -106,7 +119,7 @@ impl BlockCollector {
         //     self.execute_strategies(&block.number).await;
         // }
 
-        Ok(())
+        // Ok(())
     }
 
     /// Execute all registered strategies for a given block

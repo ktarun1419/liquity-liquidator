@@ -1,34 +1,34 @@
 mod collector;
+mod config;
 mod db;
+mod liquity;
 mod multicall;
 mod strategy;
-mod config;
-mod liquity;
 
 use collector::{BlockCollector, LogCollector};
+use config::get_info;
 use db::{DatabaseStore, initialize_database};
-use config::{get_info};
 
 use alloy::{
     network::EthereumWallet,
     providers::{
+        Identity, ProviderBuilder, RootProvider,
         fillers::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             WalletFiller,
-        }, Identity, ProviderBuilder, RootProvider
+        },
     },
     signers::local::PrivateKeySigner,
-    sol
+    sol,
 };
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use tokio::time::sleep;
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc};
+
 
 use crate::{
     liquity::{liquity_exexcution::LiquityExecutor, liquity_strategy::LiquityStrategy}
 };
-
 
 pub type DefaultProvider = FillProvider<
     JoinFill<
@@ -55,7 +55,7 @@ sol!(
     "../artifacts/IPriceFeed.sol/IPriceFeed.json"
 );
 
- const PRIVATE_KEY: &str = "0x600640501f924642f7c828e91451599b0d66ddcdb73749bb4178c97bf7a77a3d";
+const PRIVATE_KEY: &str = "0x600640501f924642f7c828e91451599b0d66ddcdb73749bb4178c97bf7a77a3d";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,14 +75,12 @@ async fn main() -> Result<()> {
     });
 
     // Initialize the database
-    
+
     let pool = initialize_database(config.database_url).await?;
 
-    
     // Create the store interface
     let store = DatabaseStore::new(pool);
     let store = Arc::new(store);
-    
 
     let mut last_block = store.get_last_block().await?;
     println!("last block from db: {}", last_block);
@@ -101,14 +99,26 @@ async fn main() -> Result<()> {
     let provider = Arc::new(provider);
     let http_provider: Arc<DefaultProvider> = Arc::new(http_provider);
 
-
-    let address_registry_instance = AddressRegistry::new(config.address_registry , &*provider);
+    let address_registry_instance = AddressRegistry::new(config.address_registry, &*provider);
     let mcr = address_registry_instance.MCR().call().await?;
     let trove_manager = address_registry_instance.troveManager().call().await?;
 
-    let liquity_executor= LiquityExecutor::new(config.liquidator_address, trove_manager ,  http_provider.clone() , provider.clone());
+    let liquity_executor = LiquityExecutor::new(
+        config.liquidator_address,
+        trove_manager,
+        http_provider.clone(),
+        provider.clone(),
+    );
 
-    let liquity_strategy = LiquityStrategy::new(trove_manager, store.clone(), provider.clone() , config.oracle_address , mcr, liquity_executor.clone() ).await;
+    let liquity_strategy = LiquityStrategy::new(
+        trove_manager,
+        store.clone(),
+        provider.clone(),
+        config.oracle_address,
+        mcr,
+        liquity_executor.clone(),
+    )
+    .await;
 
     let mut log_collector = LogCollector::new();
     log_collector.set_contract_address(trove_manager);
@@ -126,24 +136,23 @@ async fn main() -> Result<()> {
 
     let ws_provider = ProviderBuilder::new().connect_http(config.rpc_url.parse().unwrap());
     let ws_provider = Arc::new(ws_provider);
-    let mut current_block = log_collector.get_current_block_number().await?;
+    let current_block = log_collector.get_current_block_number().await?;
 
-    
+    let mut block_collector = BlockCollector::new();
+    block_collector.connect_provider(ws_provider.clone()).await;
+    block_collector.add_strategy(Box::new(liquity_strategy.clone())).await;
+    block_collector.start_listening(current_block).await?;
 
-    let _ = tokio::spawn(async move{
+    // let _ = tokio::spawn(async move{
 
-        let mut block_collector = BlockCollector::new();
-        block_collector.connect_provider(ws_provider.clone()).await;
-        block_collector.add_strategy(Box::new(liquity_strategy.clone())).await;
-        let _ = block_collector.start_listening().await;
-    });
-    let liquity_strategy = LiquityStrategy::new(trove_manager, store.clone(), provider.clone() , config.oracle_address , mcr, liquity_executor ).await;
+    // });
+    // let liquity_strategy = LiquityStrategy::new(trove_manager, store.clone(), provider.clone() , config.oracle_address , mcr, liquity_executor ).await;
 
-    loop{
-        let _ =liquity_strategy.check_for_liquidation_opportunities(current_block).await?;
-        current_block+=1;
+    // loop {
+    //     let _ = liquity_strategy.execute(tick).await?;
+    //     current_block += 1;
 
-        sleep(Duration::from_secs(1)).await;
-    }
-
+    //     sleep(Duration::from_secs(1)).await;
+    // }
+    Ok(())
 }

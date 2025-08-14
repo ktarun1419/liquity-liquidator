@@ -338,10 +338,7 @@ impl Strategy<u64> for LiquityStrategy {
         }
         self.store.set_last_block(*block_number as i64).await?;
 
-        // let ops = self.check_for_liquidation_opportunities(timestamp).await?;
-        // if !ops.is_empty() {
-        //     info!("🔍 Liquidation opportunities found: {:?}", ops.len());
-        //     self.executor.execute(ops).await?;
+        let _ = self.check_for_liquidation_opportunities(*block_number).await?;
         // }
         // let end_time = std::time::Instant::now();
         // let duration = end_time.duration_since(start_time);

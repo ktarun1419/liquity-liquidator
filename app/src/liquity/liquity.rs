@@ -1,4 +1,4 @@
-use TroveManager::{TroveManagerEvents, TroveChange};
+use TroveManager::{TroveManagerEvents};
 use alloy::{rpc::types::Log, sol, sol_types::SolEvent};
 use serde::{Deserialize, Serialize};
 

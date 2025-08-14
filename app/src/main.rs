@@ -44,14 +44,14 @@ sol!(
     #[derive(Debug, Default, Serialize, Deserialize)]
     #[sol(rpc)]
     AddressRegistry,
-    "../artifacts/AddressRegistry.sol/AddressRegistry.json"
+    "../artifacts/AddressRegistry.sol/AddressesRegistry.json"
 );
 
 sol!(
     #[derive(Debug, Default, Serialize, Deserialize)]
     #[sol(rpc)]
     PriceFeed,
-    "../artifacts/PriceFeed.sol/PriceFeed.json"
+    "../artifacts/IPriceFeed.sol/IPriceFeed.json"
 );
 
  const PRIVATE_KEY: &str = "0x600640501f924642f7c828e91451599b0d66ddcdb73749bb4178c97bf7a77a3d";

@@ -10,7 +10,6 @@ use alloy::{
 };
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use TroveManager::TroveChange;
 
 use crate::{liquity::{liquity_exexcution::LiquityLiquidator::LiquityLiquidatorInstance, liquity_strategy::StrategyProvider}, DefaultProvider};
 

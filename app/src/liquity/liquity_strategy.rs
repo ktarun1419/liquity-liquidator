@@ -9,7 +9,6 @@ use crate::{
     },
     strategy::Strategy,
 };
-use TroveManager::TroveChange;
 use alloy::{
     eips::BlockNumberOrTag,
     primitives::{Address, U256, Uint},
@@ -29,7 +28,7 @@ sol!(
     #[derive(Debug, Default, Serialize, Deserialize)]
     #[sol(rpc)]
     AggregatePriceFeed,
-    "../artifacts/IAggregatePrice.sol/IAggregatePrice.json"
+    "../artifacts/IAggregatePrice.sol/AggregatorInterface.json"
 );
 // Liquity ABIs (simplified; get full from docs)
 sol!(
@@ -43,7 +42,7 @@ sol!(
     #[derive(Debug, Default, Serialize, Deserialize)]
     #[sol(rpc)]
     AddressRegistry,
-    "../artifacts/AddressRegistry.sol/AddressRegistry.json"
+    "../artifacts/AddressRegistry.sol/AddressesRegistry.json"
 );
 
 sol!(

@@ -22,7 +22,8 @@ use alloy::{
 };
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use tokio::time::sleep;
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     liquity::{liquity_exexcution::LiquityExecutor, liquity_strategy::LiquityStrategy}
@@ -107,7 +108,7 @@ async fn main() -> Result<()> {
 
     let liquity_executor= LiquityExecutor::new(config.liquidator_address, trove_manager ,  http_provider.clone() , provider.clone());
 
-    let liquity_strategy = LiquityStrategy::new(trove_manager, store.clone(), provider.clone() , config.oracle_address , mcr, liquity_executor ).await;
+    let liquity_strategy = LiquityStrategy::new(trove_manager, store.clone(), provider.clone() , config.oracle_address , mcr, liquity_executor.clone() ).await;
 
     let mut log_collector = LogCollector::new();
     log_collector.set_contract_address(trove_manager);
@@ -125,13 +126,24 @@ async fn main() -> Result<()> {
 
     let ws_provider = ProviderBuilder::new().connect_http(config.rpc_url.parse().unwrap());
     let ws_provider = Arc::new(ws_provider);
+    let mut current_block = log_collector.get_current_block_number().await?;
 
+    
 
+    let _ = tokio::spawn(async move{
 
-    let mut block_collector = BlockCollector::new();
-    block_collector.connect_provider(ws_provider.clone()).await;
-    block_collector.add_strategy(Box::new(liquity_strategy)).await;
-    block_collector.start_listening().await?;
+        let mut block_collector = BlockCollector::new();
+        block_collector.connect_provider(ws_provider.clone()).await;
+        block_collector.add_strategy(Box::new(liquity_strategy.clone())).await;
+        let _ = block_collector.start_listening().await;
+    });
+    let liquity_strategy = LiquityStrategy::new(trove_manager, store.clone(), provider.clone() , config.oracle_address , mcr, liquity_executor ).await;
 
-    Ok(())
+    loop{
+        let _ =liquity_strategy.check_for_liquidation_opportunities(current_block).await?;
+        current_block+=1;
+
+        sleep(Duration::from_secs(1)).await;
+    }
+
 }

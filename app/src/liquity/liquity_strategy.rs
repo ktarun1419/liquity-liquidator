@@ -74,6 +74,7 @@ pub struct LiquityStrategy {
     mcr: Uint<256, 4>,         // Chainlink ETH/USD
     executor: LiquityExecutor, // Your adapted executor
     memory_cache: TroveMemoryCache,
+   
 }
 
 impl LiquityStrategy {
@@ -85,9 +86,12 @@ impl LiquityStrategy {
         oracle_address: Address,
         mcr: Uint<256, 4>,
         executor: LiquityExecutor,
+        
+       
     ) -> Self {
 
         let memory_cache = TroveMemoryCache::new(2000000);
+
 
         Self {
             name: "LiquityStrategy".to_string(),
@@ -97,7 +101,8 @@ impl LiquityStrategy {
             oracle: oracle_address,
             mcr,
             executor, // executor,
-            memory_cache
+            memory_cache,
+           
         }
     }
 
@@ -154,10 +159,11 @@ impl LiquityStrategy {
     }
 
     /// Check for liquidation opportunities
-    async fn check_for_liquidation_opportunities(
+    pub async fn check_for_liquidation_opportunities(
         &self,
         timestamp: u64,
     ) -> Result<Vec<Uint<256, 4>>> {
+        let start_time = std::time::Instant::now();
         let mut liquidatable: Vec<Uint<256, 4>> = Vec::with_capacity(32);
 
         // Get troves - from memory if available, otherwise from DB
@@ -232,12 +238,15 @@ impl LiquityStrategy {
                 "Found {} liquidatable troves - clearing cache for next iteration",
                 liquidatable.len()
             );
+          
             self.memory_cache.clear_memory();
+           let _ = self.store.close_troves(&liquidatable).await;
+            self.executor.execute(liquidatable.clone()).await?;
         }
 
-        if !liquidatable.is_empty() {
-            info!("Found {} liquidatable troves for batching", liquidatable.len());
-        }
+        let end_time = std::time::Instant::now();
+        let duration = end_time.duration_since(start_time);
+        info!("🔍 Liquidation opportunities check took {:?}", duration);
 
         Ok(liquidatable)
     }
@@ -312,9 +321,7 @@ impl Strategy<Log> for LiquityStrategy {
 impl Strategy<u64> for LiquityStrategy {
     async fn execute(&self, block_number: &u64) -> Result<()> {
         info!("🔍 Block: {:?}", block_number);
-        let start_time = std::time::Instant::now();
        
-
         let filter = Filter::new()
             .address(self.trove_manager)
             .from_block(BlockNumberOrTag::Number(*block_number))
@@ -331,16 +338,14 @@ impl Strategy<u64> for LiquityStrategy {
         }
         self.store.set_last_block(*block_number as i64).await?;
 
-        let timestamp = *block_number;
-
-        let ops = self.check_for_liquidation_opportunities(timestamp).await?;
-        if !ops.is_empty() {
-            info!("🔍 Liquidation opportunities found: {:?}", ops.len());
-            self.executor.execute(ops).await?;
-        }
-        let end_time = std::time::Instant::now();
-        let duration = end_time.duration_since(start_time);
-        info!("🔍 Liquidation opportunities check took {:?}", duration);
+        // let ops = self.check_for_liquidation_opportunities(timestamp).await?;
+        // if !ops.is_empty() {
+        //     info!("🔍 Liquidation opportunities found: {:?}", ops.len());
+        //     self.executor.execute(ops).await?;
+        // }
+        // let end_time = std::time::Instant::now();
+        // let duration = end_time.duration_since(start_time);
+        // info!("🔍 Liquidation opportunities check took {:?}", duration);
 
         Ok(())
     }

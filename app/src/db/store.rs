@@ -1,4 +1,5 @@
-use alloy::primitives::{Address};
+use alloy::primitives::{Address, Uint};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Row, SqlitePool};
 
@@ -159,6 +160,45 @@ impl DatabaseStore {
         .await?;
         Ok(())
      }
+
+     pub async fn close_troves(&self, trove_ids: &Vec<Uint::<256, 4>>) -> Result<(), sqlx::Error> {
+        if trove_ids.is_empty() {
+            return Ok(());
+        }
+    
+        // dynamically create placeholders: ?,?,? for SQLite/MySQL
+        let placeholders = std::iter::repeat("?")
+            .take(trove_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+    
+        let query = format!(
+            r#"
+            UPDATE troves
+            SET status = 'closed', last_updated = ?
+            WHERE trove_id IN ({})
+            AND status = 'active'
+            "#,
+            placeholders
+        );
+    
+        let mut q = sqlx::query(&query);
+    
+        // Optional: update last_updated time
+        let now = Utc::now();
+        q = q.bind(now);
+    
+        for id in trove_ids {
+            // Convert to hex string
+            let id_str = format!("0x{:x}", id);
+            q = q.bind(id_str);
+        }
+    
+        q.execute(&self.pool).await?;
+    
+        Ok(())
+    }
+    
 
     pub async fn _delete_trove(&self, trove_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM troves WHERE trove_id = ?")

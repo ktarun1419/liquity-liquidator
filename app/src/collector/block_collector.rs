@@ -2,8 +2,10 @@ use alloy::providers::{IpcConnect, Provider, ProviderBuilder, WsConnect};
 use eyre::Result;
 use log::{error, info};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::RwLock, time::{sleep, Instant}};
-use tokio_stream::StreamExt;
+use tokio::{
+    sync::RwLock,
+    time::{Instant, sleep},
+};
 
 use crate::strategy::Strategy;
 
@@ -68,12 +70,12 @@ impl BlockCollector {
     }
 
     /// Start listening to new blocks and trigger strategies
-    pub async fn start_listening(&self, current_block_number: u64) -> Result<()> {
-        // let provider = self.provider.as_ref().ok_or_else(|| {
-        //     eyre::eyre!("Provider not connected. Call connect_ws() or connect_ipc() first")
-        // })?;
+    pub async fn start_listening(&self) -> Result<()> {
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            eyre::eyre!("Provider not connected. Call connect_ws() or connect_ipc() first")
+        })?;
 
-        let mut block_number = current_block_number;
+        // let mut block_number = current_block_number;
 
         info!("Starting block listener...");
 
@@ -85,9 +87,10 @@ impl BlockCollector {
 
         loop {
             let start_time = Instant::now();
+            let latest_block = provider.get_block_number().await?;
+            self.execute_strategies(&latest_block).await;
 
-            self.execute_strategies(&block_number).await;
-            block_number += 1;
+            // block_number += 1;
 
             let elapsed = start_time.elapsed();
 

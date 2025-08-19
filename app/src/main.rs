@@ -136,12 +136,11 @@ async fn main() -> Result<()> {
 
     let ws_provider = ProviderBuilder::new().connect_http(config.rpc_url.parse().unwrap());
     let ws_provider = Arc::new(ws_provider);
-    let current_block = log_collector.get_current_block_number().await?;
 
     let mut block_collector = BlockCollector::new();
     block_collector.connect_provider(ws_provider.clone()).await;
     block_collector.add_strategy(Box::new(liquity_strategy.clone())).await;
-    block_collector.start_listening(current_block).await?;
+    block_collector.start_listening().await?;
 
     // let _ = tokio::spawn(async move{
 
